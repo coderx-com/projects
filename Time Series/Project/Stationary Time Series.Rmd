@@ -1,0 +1,481 @@
+---
+title: "Stationary Time Series"
+author: "Omkar Pathare"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+need <- c("tidyverse", "lubridate", "zoo",
+          "forecast", "TSA", "tseries")
+to_install <- need[!suppressWarnings(sapply(need, requireNamespace, quietly = TRUE))]
+if (length(to_install)) install.packages(to_install, dependencies = TRUE)
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(lubridate)
+  library(zoo)
+  library(forecast)
+  library(TSA)
+  library(tseries)
+})
+
+```
+
+```{r}
+## 1. Load data ----
+# Make sure these CSVs are in your working directory
+
+lap_raw         <- read_csv("lap_times.csv")
+races_raw       <- read_csv("races.csv")
+results_raw     <- read_csv("results.csv")
+constructors_raw <- read_csv("constructors.csv")
+
+glimpse(lap_raw)
+glimpse(races_raw)
+glimpse(results_raw)
+glimpse(constructors_raw)
+```
+
+```{r}
+## 2. Identify Ferrari constructorId ----
+
+ferrari_ids <- constructors_raw %>%
+  filter(str_detect(tolower(name), "ferrari")) %>%
+  pull(constructorId) %>%
+  unique()
+
+ferrari_ids
+```
+
+```{r}
+## 3. Identify Italian Grand Prix (Monza) races ----
+# We will approximate Monza using races named "Italian Grand Prix"
+# (This is acceptable for the project description: Italian GP at Monza.)
+
+monza_races <- races_raw %>%
+  filter(str_detect(tolower(name), "italian grand prix")) %>%
+  mutate(date = as.Date(date)) %>%
+  arrange(year, date)
+
+monza_races %>% select(raceId, year, name, date) %>% print(n = 10)
+
+monza_race_ids <- monza_races$raceId
+```
+
+```{r}
+## 4. Link Ferrari drivers to Monza races ----
+# results table: which drivers were in Ferrari at each race
+
+ferrari_monza_results <- results_raw %>%
+  filter(raceId %in% monza_race_ids,
+         constructorId %in% ferrari_ids) %>%
+  select(raceId, driverId, constructorId)
+
+# link lap times to these Ferrari drivers at Monza
+ferrari_monza_laps <- lap_raw %>%
+  inner_join(ferrari_monza_results, by = c("raceId", "driverId"))
+
+# attach year and date (for reference)
+ferrari_monza_laps <- ferrari_monza_laps %>%
+  left_join(monza_races %>% select(raceId, year, date), by = "raceId") %>%
+  mutate(date = as.Date(date))
+
+glimpse(ferrari_monza_laps)
+
+summary(ferrari_monza_laps$milliseconds)
+sum(is.na(ferrari_monza_laps$milliseconds))
+```
+
+```{r}
+## 5. Aggregate to lap-level Ferrari average per race ----
+# For each race and lap, take average Ferrari lap time (if both cars exist)
+
+ferrari_monza_lapmean <- ferrari_monza_laps %>%
+  group_by(year, date, raceId, lap) %>%
+  summarise(
+    mean_lap_ms = mean(milliseconds, na.rm = TRUE),
+    n_cars      = n(),
+    n_missing   = sum(is.na(milliseconds)),
+    .groups     = "drop"
+  ) %>%
+  arrange(year, date, lap)
+
+# How many laps per race?
+race_laps <- ferrari_monza_lapmean %>%
+  group_by(raceId, year) %>%
+  summarise(max_lap = max(lap), .groups = "drop") %>%
+  arrange(year)
+
+race_laps
+
+# Choose a common seasonal period = minimum number of laps across all races
+# (ensures every race has at least this many laps)
+season_L <- min(race_laps$max_lap)
+season_L
+
+# Keep only laps up to season_L so each race is a full season
+ferrari_monza_lapmean <- ferrari_monza_lapmean %>%
+  filter(lap <= season_L)
+
+# number of races (seasons)
+n_seasons <- length(unique(ferrari_monza_lapmean$raceId))
+n_seasons
+```
+
+```{r}
+## 6. Build the seasonal time series ----
+# Order data by race (year) and lap
+ferrari_monza_lapmean <- ferrari_monza_lapmean %>%
+  arrange(year, date, lap)
+
+# Extract vector of lap means
+monza_vec <- ferrari_monza_lapmean$mean_lap_ms
+
+length(monza_vec)
+expected_length <- n_seasons * season_L
+expected_length
+
+# If there are missing combos (some laps with no Ferrari car), length may be < expected_length.
+# To be safe, convert to a regular ts and then handle NAs.
+# First, we will check if length matches.
+if (length(monza_vec) != expected_length) {
+  warning("Length of data does not equal n_seasons * season_L; some laps might be missing. We'll treat them as NA and interpolate.")
+}
+
+# Create a full index of (race season, lap) and merge
+season_index_df <- expand.grid(
+  season = seq_len(n_seasons),
+  lap    = seq_len(season_L)
+) %>%
+  arrange(season, lap)
+
+# Map raceId/year to season index
+race_order <- ferrari_monza_lapmean %>%
+  group_by(raceId, year, date) %>%
+  summarise(.groups = "drop") %>%
+  arrange(year, date) %>%
+  mutate(season = row_number()) %>%
+  select(raceId, year, date, season)
+
+# Merge back lap means with (season, lap)
+monza_full <- ferrari_monza_lapmean %>%
+  left_join(race_order, by = c("raceId", "year", "date")) %>%
+  select(season, lap, mean_lap_ms) %>%
+  arrange(season, lap)
+
+# Join with complete index to ensure every (season, lap) pair exists
+monza_full <- season_index_df %>%
+  left_join(monza_full, by = c("season", "lap")) %>%
+  arrange(season, lap)
+
+# Now build ts (may contain NAs)
+monza_ts_raw <- ts(monza_full$mean_lap_ms, frequency = season_L)
+
+# Handle missing values with interpolation
+anyNA(monza_ts_raw)
+
+monza_ts <- na.approx(monza_ts_raw, na.rm = FALSE)
+monza_ts <- na.locf(monza_ts, na.rm = FALSE, fromLast = FALSE)
+monza_ts <- na.locf(monza_ts, na.rm = FALSE, fromLast = TRUE)
+
+anyNA(monza_ts)
+
+# Save the prepared series for appendix
+monza_prepared_df <- monza_full %>%
+  mutate(mean_lap_ms = as.numeric(monza_ts))
+
+write_csv(monza_prepared_df, "seasonal_ferrari_monza_lapseries.csv")
+```
+
+```{r}
+## 7. Exploratory analysis ----
+
+plot(monza_ts,
+     main = "Ferrari Lap Times at Italian GP (Monza)\n(Each season = one race, each cycle = lap 1..L)",
+     xlab = "Season-lap index",
+     ylab = "Average lap time (ms)")
+
+summary(monza_ts)
+
+hist(monza_ts,
+     main = "Histogram of Ferrari Monza Lap Times",
+     xlab = "Average lap time (ms)")
+
+boxplot(monza_ts,
+        main = "Boxplot of Ferrari Monza Lap Times",
+        ylab = "Average lap time (ms)")
+
+# Seasonal plots (by lap within race)
+ggseasonplot(monza_ts,
+             year.labels = TRUE,
+             main = "Seasonal Plot: Lap-by-Lap Pattern within Monza Races")
+
+ggsubseriesplot(monza_ts) +
+  ggplot2::labs(title = "Subseries Plot by Lap (Seasonal Pattern)")
+```
+
+```{r}
+## 8. Stationarity, nonseasonal & seasonal differencing ----
+
+# Overall trend/level
+time_index <- time(monza_ts)
+lm_trend <- lm(as.numeric(monza_ts) ~ time_index)
+
+plot(monza_ts,
+     main = "Monza Lap Times with Linear Trend",
+     xlab = "Time index",
+     ylab = "Average lap time (ms)")
+abline(lm_trend, col = "red", lwd = 2)
+
+# Unit root tests + differencing suggestions
+adf.test(monza_ts)
+
+d <- ndiffs(monza_ts)
+D <- nsdiffs(monza_ts, m = season_L)
+
+d; D   # so you can see what they are
+
+# Apply NONSEASONAL differencing only if needed
+if (d > 0) {
+  monza_diff <- diff(monza_ts, differences = d)
+} else {
+  monza_diff <- monza_ts
+}
+
+# Apply SEASONAL differencing only if needed
+if (D > 0) {
+  monza_diff_seas <- diff(monza_diff, lag = season_L, differences = D)
+} else {
+  monza_diff_seas <- monza_diff
+}
+
+plot(monza_diff_seas,
+     main = paste0("Differenced Series (d = ", d, ", D = ", D,
+                   ", m = ", season_L, ")"),
+     xlab = "Time index",
+     ylab = "Differenced lap time (ms)")
+
+adf.test(monza_diff_seas)
+
+```
+
+```{r}
+## 9. ACF & PACF for SARIMA identification ----
+
+par(mfrow = c(1,2))
+acf(monza_diff_seas, main = "ACF of Differenced Series")
+pacf(monza_diff_seas, main = "PACF of Differenced Series")
+par(mfrow = c(1,1))
+```
+
+```{r}
+## 10. Fit candidate SARIMA models ----
+
+# Automatic SARIMA
+fit_auto <- auto.arima(monza_ts,
+                       seasonal = TRUE,
+                       stepwise = FALSE,
+                       approximation = FALSE,
+                       D = D,
+                       max.P = 2, max.Q = 2, max.p = 3, max.q = 3)
+
+fit_auto
+
+# Some manual SARIMA candidates guided by ACF/PACF
+fit_011_011 <- Arima(monza_ts,
+                     order = c(0, d, 1),
+                     seasonal = c(0, D, 1))
+
+fit_110_011 <- Arima(monza_ts,
+                     order = c(1, d, 0),
+                     seasonal = c(0, D, 1))
+
+fit_111_011 <- Arima(monza_ts,
+                     order = c(1, d, 1),
+                     seasonal = c(0, D, 1))
+
+fit_011_111 <- Arima(monza_ts,
+                     order = c(0, d, 1),
+                     seasonal = c(1, D, 1))
+
+# Model comparison: AIC/BIC
+model_comp <- tibble(
+  Model = c("auto.arima",
+            "ARIMA(0,d,1)(0,D,1)[m]",
+            "ARIMA(1,d,0)(0,D,1)[m]",
+            "ARIMA(1,d,1)(0,D,1)[m]",
+            "ARIMA(0,d,1)(1,D,1)[m]"),
+  AIC = c(AIC(fit_auto),
+          AIC(fit_011_011),
+          AIC(fit_110_011),
+          AIC(fit_111_011),
+          AIC(fit_011_111)),
+  BIC = c(BIC(fit_auto),
+          BIC(fit_011_011),
+          BIC(fit_110_011),
+          BIC(fit_111_011),
+          BIC(fit_011_111))
+)
+
+model_comp %>% arrange(AIC)
+model_comp %>% arrange(BIC)
+
+write_csv(model_comp, "seasonal_monza_model_comparison.csv")
+```
+
+```{r}
+## 11. Residual diagnostics ----
+
+check_model <- function(fit, title = "") {
+  cat("\n============================\n")
+  cat("Residual diagnostics for:", title, "\n")
+  print(summary(fit))
+  forecast::checkresiduals(fit)
+}
+
+check_model(fit_auto, "auto.arima (seasonal)")
+check_model(fit_111_011, "ARIMA(1,d,1)(0,D,1)[m]")
+check_model(fit_011_111, "ARIMA(0,d,1)(1,D,1)[m]")
+
+# Choose the best model based on AIC/BIC + diagnostic checks:
+fit_best <- fit_auto  # change this if a manual model looks better
+```
+
+```{r}
+## 12. Train–test split for forecast evaluation ----
+# Hold out last K seasons (races), i.e., h = K * season_L observations
+
+season_L  <- frequency(monza_ts)
+n_total   <- length(monza_ts)
+
+K <- 2L  # desired number of seasons to hold out
+h <- K * season_L
+
+# If we don't have enough data for K full seasons, reduce K/h
+if (h >= n_total) {
+  # fallback: hold out about 20% of the data, at least one full season
+  h <- max(season_L, floor(0.2 * n_total))
+  h <- min(h, n_total - season_L)   # leave at least one season for training
+}
+
+train_end <- n_total - h
+
+# Simple index-based split (avoids window() issues)
+monza_train <- monza_ts[1:train_end]
+monza_test  <- monza_ts[(train_end + 1):n_total]
+
+length(monza_train); length(monza_test)
+
+# Fit models on training set
+fit_auto_tr <- auto.arima(monza_train,
+                          seasonal = TRUE,
+                          stepwise = FALSE,
+                          approximation = FALSE,
+                          D = D)
+
+fit_111_011_tr <- Arima(monza_train,
+                        order    = c(1, ndiffs(monza_train), 1),
+                        seasonal = c(0, nsdiffs(monza_train, m = season_L), 1))
+
+# Forecast h steps ahead
+fc_auto <- forecast(fit_auto_tr, h = length(monza_test))
+fc_111  <- forecast(fit_111_011_tr, h = length(monza_test))
+
+# Compare forecast accuracy on the held-out test set
+acc_auto <- accuracy(fc_auto, monza_test)
+acc_111  <- accuracy(fc_111,  monza_test)
+
+acc_auto
+acc_111
+```
+
+```{r}
+## 13. Final model & forecasting ----
+
+fit_final <- fit_best
+
+# Forecast next K_future Monza races -> K_future * season_L laps
+K_future <- 2L
+h_future <- K_future * season_L
+
+fc_final <- forecast(fit_final, h = h_future)
+fc_final
+
+autoplot(fc_final) +
+  ggplot2::labs(
+    title = paste0("Forecast: Ferrari Lap Times at Monza\nNext ", K_future, " Races"),
+    x     = "Future time index (lap within race)",
+    y     = "Average lap time (ms)"
+  )
+
+# Save forecast table
+fc_df <- tibble(
+  Step      = seq_len(h_future),
+  Point_Fc  = as.numeric(fc_final$mean),
+  Lower_80  = as.numeric(fc_final$lower[,"80%"]),
+  Upper_80  = as.numeric(fc_final$upper[,"80%"]),
+  Lower_95  = as.numeric(fc_final$lower[,"95%"]),
+  Upper_95  = as.numeric(fc_final$upper[,"95%"])
+)
+
+write_csv(fc_df, "seasonal_monza_forecasts.csv")
+
+```
+
+```{r}
+# Create output folder
+if(!dir.exists("figures_seasonal")) dir.create("figures_seasonal")
+
+# 1. Raw seasonal TS -----------------------------------------------------------
+png("figures_seasonal/seasonal_monza_ts.png", width=1200, height=800)
+plot(monza_ts, main="Ferrari Monza Lap Times", ylab="Milliseconds", xlab="Time Index")
+dev.off()
+
+# 2. Seasonal plot (laps × race) -----------------------------------------------
+png("figures_seasonal/seasonal_monza_seasonplot.png", width=1200, height=800)
+seasonplot(monza_ts, season.labels=TRUE, main="Season Plot: Ferrari Monza Lap Times")
+dev.off()
+
+# 3. Boxplot by season (year) --------------------------------------------------
+png("figures_seasonal/seasonal_monza_box.png", width=1200, height=800)
+boxplot(mean_lap_ms ~ raceId, data=ferrari_monza_lapmean,
+        main="Lap Time Distribution by Race", xlab="Race", ylab="Lap Time (ms)")
+dev.off()
+
+# 4. ACF raw -------------------------------------------------------------------
+png("figures_seasonal/seasonal_monza_acf_raw.png", width=1200, height=800)
+acf(monza_ts, main="ACF of Raw Monza Lap Times")
+dev.off()
+
+# 5. PACF raw ------------------------------------------------------------------
+png("figures_seasonal/seasonal_monza_pacf_raw.png", width=1200, height=800)
+pacf(monza_ts, main="PACF of Raw Monza Lap Times")
+dev.off()
+
+# 6. Differenced series ---------------------------------------------------------
+png("figures_seasonal/seasonal_monza_diff_ts.png", width=1200, height=800)
+plot(monza_diff_seas, main="Differenced Seasonal Monza Lap Times")
+dev.off()
+
+# 7. ACF differenced series -----------------------------------------------------
+png("figures_seasonal/seasonal_monza_acf_diff.png", width=1200, height=800)
+acf(monza_diff_seas, main="ACF of Differenced Monza Lap Times")
+dev.off()
+
+# 8. PACF differenced series ----------------------------------------------------
+png("figures_seasonal/seasonal_monza_pacf_diff.png", width=1200, height=800)
+pacf(monza_diff_seas, main="PACF of Differenced Monza Lap Times")
+dev.off()
+
+# 9. SARIMA residual diagnostics ------------------------------------------------
+png("figures_seasonal/seasonal_monza_residuals.png", width=1200, height=800)
+forecast::checkresiduals(fit_best)
+dev.off()
+
+# 10. Forecast for next race ----------------------------------------------------
+png("figures_seasonal/seasonal_monza_forecast.png", width=1200, height=800)
+plot(fc_final, main="Forecast of Ferrari Monza Lap Times")
+dev.off()
+
+```

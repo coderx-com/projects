@@ -1,0 +1,254 @@
+---
+title: "Project"
+author: "Omkar Pathare, CWID-20028753"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+## Load required libraries
+need <- c("tidyverse", "lubridate", "zoo", "forecast", "TSA", "tseries")
+to_install <- need[!suppressWarnings(sapply(need, requireNamespace, quietly = TRUE))]
+if (length(to_install)) install.packages(to_install, dependencies = TRUE)
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(lubridate)
+  library(zoo)
+  library(forecast)
+  library(TSA)
+  library(tseries)
+})
+```
+
+```{r}
+#Data Source Description (Required in Project)
+dataset_link  <- "https://www.kaggle.com/datasets/rohanrao/formula-1-world-championship-1950-2020"
+dataset_desc  <- "Dataset containing Formula 1 race, pit-stop, constructor and lap-time records (1950–2020); Ferrari pit-stop durations are extracted for nonseasonal analysis."
+
+dataset_link
+dataset_desc
+
+```
+
+```{r}
+#Load Raw CSVs
+pit_raw         <- read_csv("pit_stops.csv")
+races_raw       <- read_csv("races.csv")
+results_raw     <- read_csv("results.csv")
+constructors_raw <- read_csv("constructors.csv")
+
+```
+
+```{r}
+#Identify Ferrari Constructor
+ferrari_ids <- constructors_raw %>%
+  filter(str_detect(tolower(name), "ferrari")) %>%
+  pull(constructorId) %>% unique()
+
+ferrari_ids
+
+```
+
+```{r}
+#Filter Ferrari Pit-Stops and Join Race Metadata
+# Filter Ferrari race results
+ferrari_results <- results_raw %>%
+  filter(constructorId %in% ferrari_ids) %>%
+  select(raceId, driverId)
+
+# Join pit stops correctly (FIXED COMMA)
+pit_ferrari <- pit_raw %>%
+  inner_join(ferrari_results, by = c("raceId", "driverId"))
+
+# Add race metadata
+races_small <- races_raw %>%
+  select(raceId, year, date) %>%
+  mutate(date = as.Date(date))
+
+pit_ferrari <- pit_ferrari %>%
+  left_join(races_small, by = "raceId") %>%
+  filter(year >= 2000)
+
+sum(is.na(pit_ferrari$milliseconds))
+
+
+```
+
+```{r}
+#Aggregate to Race-Level Series
+pit_ferrari_race <- pit_ferrari %>%
+  group_by(year, date, raceId) %>%
+  summarise(
+    mean_pit_ms = mean(milliseconds, na.rm = TRUE),
+    n_pit = n(),
+    n_missing = sum(is.na(milliseconds)),
+    .groups = "drop"
+  ) %>%
+  arrange(date)
+
+pit_ferrari_race <- pit_ferrari_race %>% mutate(race_index = row_number())
+
+pit_ts <- ts(pit_ferrari_race$mean_pit_ms, start = 1, frequency = 1)
+
+pit_ts
+
+```
+
+```{r}
+#Handle Missing Values & Outliers
+pit_ts_imp <- na.approx(pit_ts, na.rm = FALSE)
+pit_ts_imp <- na.locf(pit_ts_imp, na.rm = FALSE)
+pit_ts_imp <- na.locf(pit_ts_imp, na.rm = FALSE, fromLast = TRUE)
+
+out_info <- tsoutliers(pit_ts_imp)
+out_info
+
+pit_ts_adj <- pit_ts_imp
+if (length(out_info$index) > 0) {
+  pit_ts_adj[out_info$index] <- out_info$replacements
+}
+
+```
+
+```{r}
+#Exploratory Plots
+par(mfrow = c(1,1))
+
+plot(pit_ts_adj,
+     main = "Ferrari Pit-Stop Duration per Race (Adjusted)",
+     xlab = "Race Index",
+     ylab = "Average Pit Time (ms)")
+
+hist(pit_ts_adj, main = "Histogram of Pit-Stop Duration", xlab = "Milliseconds")
+
+boxplot(pit_ts_adj,
+        main = "Boxplot of Pit-Stop Duration",
+        ylab = "Milliseconds")
+
+summary(pit_ts_adj)
+
+```
+
+```{r}
+#Trend Line & Stationarity (ADF, ndiffs)
+time_index <- time(pit_ts_adj)
+lm_trend <- lm(as.numeric(pit_ts_adj) ~ time_index)
+
+plot(pit_ts_adj)
+abline(lm_trend, col="red", lwd=2)
+
+adf.test(pit_ts_adj)
+
+d_order <- ndiffs(pit_ts_adj)
+d_order
+
+pit_ts_diff <- diff(pit_ts_adj, differences = d_order)
+
+plot(pit_ts_diff,
+     main = paste("Differenced Series (d =", d_order, ")"))
+
+```
+
+```{r}
+#ACF & PACF
+par(mfrow = c(1,2))
+acf(pit_ts_diff, main = "ACF of Differenced Series")
+pacf(pit_ts_diff, main = "PACF of Differenced Series")
+par(mfrow = c(1,1))
+
+```
+
+```{r}
+#Fit Candidate ARIMA Models
+fit_auto <- auto.arima(pit_ts_adj, seasonal = FALSE)
+
+fit_011 <- Arima(pit_ts_adj, order = c(0, d_order, 1))
+fit_110 <- Arima(pit_ts_adj, order = c(1, d_order, 0))
+fit_111 <- Arima(pit_ts_adj, order = c(1, d_order, 1))
+fit_210 <- Arima(pit_ts_adj, order = c(2, d_order, 0))
+fit_211 <- Arima(pit_ts_adj, order = c(2, d_order, 1))
+
+model_table <- tibble(
+  Model = c("Auto", "ARIMA(0,1,1)", "ARIMA(1,1,0)", "ARIMA(1,1,1)", "ARIMA(2,1,0)", "ARIMA(2,1,1)"),
+  AIC = c(AIC(fit_auto), AIC(fit_011), AIC(fit_110), AIC(fit_111), AIC(fit_210), AIC(fit_211)),
+  BIC = c(BIC(fit_auto), BIC(fit_011), BIC(fit_110), BIC(fit_111), BIC(fit_210), BIC(fit_211))
+)
+
+model_table
+
+```
+
+```{r}
+#Residual Diagnostics (Full Requirements)
+checkresiduals(fit_auto)
+
+hist(residuals(fit_auto), main = "Residual Histogram", xlab = "Residuals")
+
+qqnorm(residuals(fit_auto)); qqline(residuals(fit_auto))
+
+shapiro.test(residuals(fit_auto))
+
+```
+
+```{r}
+#Train–Test Split + Accuracy Evaluation
+n <- length(pit_ts_adj)
+h <- 20
+
+train <- pit_ts_adj[1:(n - h)]
+test  <- pit_ts_adj[(n - h + 1):n]
+
+fit_train <- auto.arima(train, seasonal = FALSE)
+
+fc_test <- forecast(fit_train, h = h)
+
+accuracy(fc_test, test)
+
+```
+
+```{r}
+#Final Model & Forecast Plot
+fit_final <- fit_auto
+
+fc_final <- forecast(fit_final, h = 20)
+
+plot(fc_final,
+     main = "Forecasted Ferrari Pit-Stop Durations",
+     ylab = "Milliseconds")
+
+```
+
+```{r}
+#Save Figures for Appendix
+if (!dir.exists("figures_nonseasonal")) dir.create("figures_nonseasonal")
+
+png("figures_nonseasonal/ts.png", width=1200, height=800)
+plot(pit_ts_adj)
+dev.off()
+
+png("figures_nonseasonal/trend.png", width=1200, height=800)
+plot(pit_ts_adj); abline(lm_trend, col="red", lwd=2)
+dev.off()
+
+png("figures_nonseasonal/diff.png", width=1200, height=800)
+plot(pit_ts_diff)
+dev.off()
+
+png("figures_nonseasonal/acf.png", width=1200, height=800)
+acf(pit_ts_diff)
+dev.off()
+
+png("figures_nonseasonal/pacf.png", width=1200, height=800)
+pacf(pit_ts_diff)
+dev.off()
+
+png("figures_nonseasonal/residuals.png", width=1200, height=800)
+checkresiduals(fit_auto)
+dev.off()
+
+png("figures_nonseasonal/forecast.png", width=1200, height=800)
+plot(fc_final)
+dev.off()
+
+```
