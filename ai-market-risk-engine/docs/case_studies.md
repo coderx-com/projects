@@ -24,7 +24,7 @@ The model flagged a **high-risk volatility regime**, with risk probability close
 **Interpretation**  
 > Risk was driven by volatility clustering across multiple horizons rather than a single-day price shock.
 
----
+--- 
 
 ## AAPL — Volatility Compression (Low Risk)
 
