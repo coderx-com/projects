@@ -6,7 +6,7 @@ This document presents real-world case studies demonstrating how the model ident
 
 ## NVDA — Volatility Expansion (High Risk)
 
-![NVDA Price & Risk Timeline](ai-market-risk-engine/figures/nvda_price_risk.png)
+![NVDA Price & Risk Timeline](../figures/nvda_price_risk.png)
 
 **Context**  
 NVIDIA experienced increased market instability following rapid price appreciation, leading to volatility expansion across multiple time horizons.
@@ -14,7 +14,7 @@ NVIDIA experienced increased market instability following rapid price appreciati
 **Model Prediction**  
 The model flagged a **high-risk volatility regime**, with risk probability close to 1.
 
-![NVDA SHAP Waterfall](ai-market-risk-engine/figures/nvda_shap_waterfall.png)
+![NVDA SHAP Waterfall](../figures/nvda_shap_waterfall.png)
 
 **Why the Model Flagged Risk (SHAP Explanation)**  
 - `vol_30d` and `vol_20d` were the dominant contributors, indicating sustained volatility persistence  
@@ -28,7 +28,7 @@ The model flagged a **high-risk volatility regime**, with risk probability close
 
 ## AAPL — Volatility Compression (Low Risk)
 
-![AAPL Price & Risk Timeline](ai-market-risk-engine/figures/aapl_price_risk.png)
+![AAPL Price & Risk Timeline](../figures/aapl_price_risk.png)
 
 **Context**  
 Despite broader market uncertainty, Apple traded within a relatively stable range with compressed volatility.
@@ -36,7 +36,7 @@ Despite broader market uncertainty, Apple traded within a relatively stable rang
 **Model Prediction**  
 The model strongly **suppressed risk**, producing a near-zero risk score.
 
-![AAPL SHAP Waterfall](ai-market-risk-engine/figures/aapl_shap_waterfall.png)
+![AAPL SHAP Waterfall](../figures/aapl_shap_waterfall.png)
 
 **Why Risk Was Suppressed (SHAP Explanation)**  
 - Low `vol_10d`, `vol_20d`, and `vol_30d` all pushed predictions downward  
@@ -49,7 +49,7 @@ The model strongly **suppressed risk**, producing a near-zero risk score.
 
 ## AMZN — Regime Transition (Early Warning)
 
-![AMZN Price & Risk Timeline](ai-market-risk-engine/figures/amzn_price_risk.png)
+![AMZN Price & Risk Timeline](../figures/amzn_price_risk.png)
 
 **Context**  
 Amazon transitioned from a low-volatility environment into a more unstable trading regime.
@@ -58,7 +58,7 @@ Amazon transitioned from a low-volatility environment into a more unstable tradi
 - Risk probability increased gradually before major price swings  
 - The model provided early warning rather than reacting after instability occurred
 
-![AMZN SHAP Interaction](ai-market-risk-engine/figures/amzn_shap_interaction.png)
+![AMZN SHAP Interaction](../figures/amzn_shap_interaction.png)
 
 **Key Insight (SHAP Interaction)**  
 - Interaction between `vol_10d` and `vol_20d` strengthened as risk increased  
