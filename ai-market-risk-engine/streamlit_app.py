@@ -40,3 +40,30 @@ ticker = st.sidebar.selectbox(
 )
 
 st.write(f"### {ticker} — Price with Predicted Risk Periods")
+
+# ---------- Filter data for selected ticker ----------
+ticker_df = plot_df[plot_df["ticker"] == ticker]
+
+# ---------- Price + risk plot ----------
+fig, ax = plt.subplots(figsize=(12, 4))
+
+ax.plot(
+    ticker_df["date"],
+    ticker_df["close"],
+    label="Price",
+    linewidth=2
+)
+
+ax.scatter(
+    ticker_df[ticker_df["risk_label"] == 1]["date"],
+    ticker_df[ticker_df["risk_label"] == 1]["close"],
+    color="red",
+    s=15,
+    label="High Risk"
+)
+
+ax.set_xlabel("Date")
+ax.set_ylabel("Price")
+ax.legend()
+
+st.pyplot(fig)
