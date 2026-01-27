@@ -6,7 +6,7 @@ This document presents real-world case studies demonstrating how the model ident
 
 ## NVDA — Volatility Expansion (High Risk)
 
-![NVDA Price & Risk Timeline](ai-market-risk-engine/figures/nvda_price_risk.png)
+![NVDA Price & Risk Timeline](ai-market-risk-engine/figures/nvda_price_risk(1).png)
 
 **Context**  
 NVIDIA experienced increased market instability following rapid price appreciation, leading to volatility expansion across multiple time horizons.
@@ -28,7 +28,7 @@ The model flagged a **high-risk volatility regime**, with risk probability close
 
 ## AAPL — Volatility Compression (Low Risk)
 
-![AAPL Price & Risk Timeline](ai-market-risk-engine/figures/aapl_price_risk.png)
+![AAPL Price & Risk Timeline](ai-market-risk-engine/figures/aapl_price_risk(1).png)
 
 **Context**  
 Despite broader market uncertainty, Apple traded within a relatively stable range with compressed volatility.
@@ -49,7 +49,7 @@ The model strongly **suppressed risk**, producing a near-zero risk score.
 
 ## AMZN — Regime Transition (Early Warning)
 
-![AMZN Price & Risk Timeline](ai-market-risk-engine/figures/amzn_price_risk.png)
+![AMZN Price & Risk Timeline](ai-market-risk-engine/figures/amzn_price_risk(1).png)
 
 **Context**  
 Amazon transitioned from a low-volatility environment into a more unstable trading regime.
