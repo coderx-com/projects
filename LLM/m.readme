@@ -1,0 +1,82 @@
+# Drawing with LLM — Qwen-7B QLoRA Fine-Tuning
+
+> Fine-tuning a 7B parameter LLM to generate structured SVG vector graphics from natural language prompts.
+
+**Author:** Omkar Shashank Pathare · opathare@stevens.edu
+
+---
+
+## Overview
+
+This project fine-tunes **Qwen-7B** using **QLoRA** (Quantized Low-Rank Adaptation) on a dataset of 10,000 SVG–natural language prompt pairs sourced from a Kaggle competition. The goal is to train the model to produce valid, well-structured SVG markup from free-form English descriptions of shapes and compositions.
+
+---
+
+## Problem Statement
+
+Zero-shot LLMs struggle to generate syntactically valid and semantically aligned SVG code. A single misplaced character breaks the entire graphic. The challenge is teaching a language model to reason about geometric structure, coordinate systems, and SVG grammar simultaneously.
+
+---
+
+## Approach
+
+### Data Pipeline
+- Loaded 10,000 SVG–prompt pairs from `.csv` format
+- **SVG canonicalization:** Normalized path commands, standardized coordinate formats, stripped unnecessary metadata
+- **Validation:** Filtered malformed and non-renderable SVGs before training to ensure clean supervision signal
+
+### Model & Training
+- Base model: **Qwen-7B** (7 billion parameters)
+- Fine-tuning method: **QLoRA** — 4-bit quantization + LoRA applied to all attention projection layers (`q_proj`, `v_proj`, `k_proj`, `o_proj`)
+- Hardware: Single A100 GPU (fits in GPU memory due to 4-bit quantization)
+- Framework: Hugging Face `transformers` + `peft` + `bitsandbytes`
+
+### Evaluation
+- Compared fine-tuned model against zero-shot Qwen-7B baseline on held-out test prompts
+- Metrics: SVG validity rate, shape alignment score, path coherence
+- Result: Fine-tuned model showed improved structural accuracy and shape-prompt alignment over baseline
+
+---
+
+## Results
+
+| Metric | Zero-Shot Baseline | Fine-Tuned |
+|--------|-------------------|------------|
+| SVG Validity Rate | Low | Significantly improved |
+| Shape-Prompt Alignment | Poor | Noticeably better |
+| Path Coherence | Inconsistent | More reliable |
+
+---
+
+## Tech Stack
+
+| Category | Tools |
+|----------|-------|
+| Model | Qwen-7B |
+| Fine-tuning | QLoRA (4-bit), LoRA via `peft` |
+| Framework | Hugging Face Transformers |
+| Data | Python, Pandas, SVG parsing |
+| Hardware | A100 GPU (Kaggle environment) |
+
+---
+
+## Repository Structure
+
+```
+LLM/
+├── notebook.ipynb       # Main training and evaluation notebook
+├── data/                # SVG-prompt pairs (or data loading scripts)
+└── README.md
+```
+
+---
+
+## Key Learnings
+
+- QLoRA makes fine-tuning 7B models feasible on a single consumer/research GPU
+- Data quality (SVG canonicalization + validation) matters more than training duration for structured output tasks
+- Prompt formatting significantly impacts how well the model learns the SVG generation task
+
+---
+
+*Part of the [projects](https://github.com/coderx-com/projects) repository · [Full Portfolio](https://coderx-com.github.io/Portfolio)*
